@@ -26,8 +26,10 @@
 #define PS2_SEL 6
 #define PS2_CLK 7
 
-
-#define ANALOG_PIN_MAX  4095  // measured
-#define ANALOG_PIN_MIN  815   // measured
+// ESP32c3 is 12bit ADC 
+// But, it's maximum voltage is 2.5, 
+// I connected the Potentiometer direct to 3.3v and GND， which almost cause overflow. should be proper tuned later to .
+#define BASE_ANALOG_PIN_MAX  4095  // measured
+#define BASE_ANALOG_PIN_MIN  815   // measured
 
 #endif

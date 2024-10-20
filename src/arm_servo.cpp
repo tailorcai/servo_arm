@@ -22,14 +22,12 @@ PS2Controller ps2_controller;
 //   true         // Enable internal pull-up resistor
 // );
 
+// 底座是步进电机驱动，使用了专用的驱动模块，
 AccelStepper stepper(AccelStepper::DRIVER, STEPPER_PULSE, STEPPER_DIR); // Defaults to AccelStepper::FULL4WIRE (4 pins) on 2, 3, 4, 5
+// 因为步进电机没有位置信息，原设计上底座上有一个电位器，用来定位步进电机的位置。这里测量了底座旋转的极限，
+BaseRotate baseRotate( stepper, BASE_ANALOG_PIN, BASE_ANALOG_PIN_MIN, BASE_ANALOG_PIN_MAX);
 
-BaseRotate baseRotate( stepper, BASE_ANALOG_PIN, ANALOG_PIN_MIN, ANALOG_PIN_MAX);
-bool diag_mode = false;
-
-// our servo # counter
-uint8_t servonum = 0;
-
+// define each servo instance
 PWMServo* servos[6] = {
   new PWMServo(pwm, 0, 120, 490),
   new PWMServo(pwm, 2, 120, 490),
@@ -39,6 +37,7 @@ PWMServo* servos[6] = {
   new PWMServo(pwm, 12, 110, 450, -1), 
 };
 
+// define each joint's relationship with the servo
 Joint* joints[5] = {
   new Joint(servos[0]),
   new Joint(servos[1]),
@@ -47,15 +46,18 @@ Joint* joints[5] = {
   new Joint(servos[4], servos[5]),
 };
 
+// ARM state data for operation
 struct ArmState{
   float x;
   float y;
   float z_angle;
 } arm_state;
 
+// arm's special position
 static int servo_park_pos[] = {200,320,200,300,250};
 static int servo_init_pos[] = {90,90,90,90,120};
 
+// on startup, set the arm to a specific positon
 void servo_reset() {
   for( int i=4;i>=0;i--) {
     // if( servo_init_pos[i] > 0)
@@ -64,38 +66,25 @@ void servo_reset() {
   }
 }
 
-// void servo_park() {
-//   servo_reset();
-//   for( int i=4;i>=0;i--) {
-//     if( servo_park_pos[i] > 0)
-//       joints[i]->moveTo( servo_park_pos[i]);
-//   }
-// }
-void handleReset() {
-      // pwm.reset();
-      servo_reset();
-}
-
-
-
+// move arm to (x,y,z?) smoothly
 bool arm_move_to(float x, float y, int duration_in_ms = 1000) {
   static float a1 = 18.5, a2 = 10.5;
   double r = sqrt((x * x) + (y * y));
- double phi_2 = acos(((a2 * a2)-(a1 * a1)-(r * r))/(-2 * a1 * r)) * RAD_TO_DEG;
-   double phi_1 = acos(((y * y)-(r * r)-(x * x))/(-2 * r * x)) * RAD_TO_DEG;
-   double phi_3 = acos(((r * r)-(a1 * a1)-(a2 * a2))/(-2 * a1 * a2)) * RAD_TO_DEG;
+  double phi_2 = acos(((a2 * a2)-(a1 * a1)-(r * r))/(-2 * a1 * r)) * RAD_TO_DEG;
+  double phi_1 = acos(((y * y)-(r * r)-(x * x))/(-2 * r * x)) * RAD_TO_DEG;
+  double phi_3 = acos(((r * r)-(a1 * a1)-(a2 * a2))/(-2 * a1 * a2)) * RAD_TO_DEG;
 
   if( isnan(phi_1)) phi_1 = 90;
 
-   double theta_1 = phi_2 + phi_1;
-   double theta_2 = phi_3;
+  double theta_1 = phi_2 + phi_1;
+  double theta_2 = phi_3;
   
   Serial.println( "Target angles:" + String(theta_1) + "," + String(theta_2));
   if( isnan( theta_1) || isnan(theta_2) ) {
     return false;
   }
 
-   double angles[5][2] = {{90}, {90}, {180}, {theta_2}, {theta_1}};  // target , step
+  double angles[5][2] = {{90}, {90}, {180}, {theta_2}, {theta_1}};  // target , step
   int steps = duration_in_ms / 20;
   if( steps ) {
     for( int i=0;i<5;i++)
@@ -109,13 +98,14 @@ bool arm_move_to(float x, float y, int duration_in_ms = 1000) {
         else
           output += "," + String(newv);
       }
+      // dump for debug 
       Serial.println( output) ;
       delay(20);
     }
   }
-  Serial.println("...");
+  
+  // 前面是线性增量移动，可能有一点点遗留误差，这里补充一下，移动到目标位置
   for( int i=0;i<5;i++) {
-    Serial.println(i);
     joints[i]->move_to( angles[i][0] );
   }
 
@@ -123,6 +113,7 @@ bool arm_move_to(float x, float y, int duration_in_ms = 1000) {
   return true;
 }
 
+// PS2 remote controller event handler
 int ps2_event(int id, int value) {
   Serial.println("ps2 event:" + String(id) + ",v="+ String(value));
   //
@@ -159,12 +150,15 @@ void setup() {
   Serial.println("8 channel Servo test!");
 
   delay(100);
+
+  // init ps2 controller
   ps2_controller.setup();
   ps2_controller.set_event_handler( ps2_event );
 
-  // btnOnOff.attachClick(handleReset);
-
+  // init I2C
   Wire.setPins(PIN_SDA, PIN_SCL);
+
+  // init pwm board
   pwm.begin();
   /*
    * In theory the internal oscillator (clock) is 25MHz but it really isn't
@@ -185,26 +179,33 @@ void setup() {
   pwm.setOscillatorFrequency(27000000);
   pwm.setPWMFreq(SERVO_FREQ);  // Analog servos run at ~50 Hz updates
 
-  // for  esp32, the value is 4096
+  // init base adc , for esp32, ADC is 12bit
   pinMode(BASE_ANALOG_PIN, INPUT);    // analog input
   delay(10);
 
-  servo_reset();    // calc 
+  // reset to startup positon
+  servo_reset();    
+
+  // TODO: do a forward kinect ...
   arm_state.x = 15;
   arm_state.y = 15;
   arm_state.z_angle = 0;
 
+  // rotate the base to 0 angle
   baseRotate.reset();
+
   Serial.println("start");
 }
 
+// serial terminal control handler
 void control(char *buf) {
     char cmd;
     static char temp[20];
     cmd = buf[0];       // format: cmd ****
     char* ptr = buf+2;  // point to char after 'space' 
     switch(cmd) {
-      case 'j': {
+      // Joint cmd
+      case 'j': {   
         int id,angle;
         if( 2 == sscanf(ptr, "%d %d", &id, &angle) ) {
             joints[id]->move_to(angle);
@@ -213,7 +214,8 @@ void control(char *buf) {
         // error goes here
         break;
       }
-      case 'b': {
+      // Base cmd
+      case 'b': {   
         int len = SerialHelper::parse_next(ptr, temp);
         if( len ) {
           int angle = atoi(temp);
@@ -222,11 +224,13 @@ void control(char *buf) {
         }
         break;
       }
+      // reset
       case 'r': {
         // pwm.reset();
         servo_reset();
         goto success;
       }
+      // move cmd
       case 'm': {
         float x,y;
         if( 2 == sscanf(ptr, "%f %f", &x, &y) ) {
@@ -237,6 +241,8 @@ void control(char *buf) {
         break;
       }
 
+      // servo control directly, for debug usage...
+      // because servo4 and servo5 is tie together
       case '*': {
         int id,pulse;
         if( 2 == sscanf(ptr, "%d %d", &id, &pulse) ) {
@@ -246,6 +252,7 @@ void control(char *buf) {
         break;
       }
 
+      // dump cmd
       case 'd': {
         Serial.println("Joint status:");
         for( int i=0;i<5;i++ ) {
@@ -266,9 +273,6 @@ success:
 
 void loop() {
   static char buf[80];
-
-  // btnOnOff.tick();
-
   if(SerialHelper::readline(Serial.read(), buf, 80) > 0) {
     control( buf );
   }
@@ -276,5 +280,6 @@ void loop() {
   baseRotate.loop();
 
   ps2_controller.loop();
+  
   delay(10);
 }

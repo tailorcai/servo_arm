@@ -31,11 +31,15 @@ class BaseRotate {
     }
 
     void reset() {
+      // 获取当前位置，通过均值过滤器，提升精度
       for(int i=0;i<20;i++)
         meanFilter.push( analogRead(pinMeter) );
       curPos = meanFilter.mean();
 
+      // 0 degree 
       int mid = ( minPos + maxPos ) /2;
+
+      // moving
       setTargetPos( mid );        
 
       dumpPos();
@@ -47,20 +51,19 @@ class BaseRotate {
     }
 
     void dumpPos() {
-      static elapsedMillis interval=0;
-      if( interval > 1000 ) {
-        Serial.println("stepper pos:" + String(curPos) + "," + String(theStepper.currentPosition()));
-        interval = 0;
-      }
+      Serial.println("stepper pos:" + String(curPos) + "," + String(theStepper.currentPosition()));
     }
 
     void loop() {
+      // update position
       meanFilter.push( analogRead(pinMeter) );
       curPos = meanFilter.mean();
 
+      // a simple interpolation implement
+      // it's better to use RAMP.h for enhanced movement control
       if( targetPosValid && sinceLastCheck > CHECK_INVERVAL_S ) {
         theStepper.setSpeed(SPEED);
-        int target = (targetPos - curPos) * 1;
+        int target = (targetPos - curPos) * 1;  // in case the stepper's dir opposite, change to -1
         if( abs(target)>=2) { 
           theStepper.move(target);   // 目前是反向的
           // Serial.println("Move:" + String( target));
@@ -78,17 +81,19 @@ class BaseRotate {
       // dumpPos();
 
     }
+
+    bool isRunning() {
+      return targetPosValid;
+    }
 };
 
 class PWMServo {
   protected:
     Adafruit_PWMServoDriver& pwm;
     int id;
-    int vmin;
-    int vmax;
+    int vmin, vmax; // physical limitation for each servo
     double cur_val;
-
-    bool angle_reverse;
+    bool angle_reverse; // in case dir is not consistent
   protected:
     void set(int pulselen) {
       pwm.setPWM( id, 0,pulselen );
@@ -100,11 +105,13 @@ class PWMServo {
     }
 
     void stop() {
-      pwm.setPWM(id,0,0);
+      pwm.setPWM(id,0,0); // set 0 will cause the servo lose power at all, for debug usage
     }
+
 
     void moveTo(double angle) {
       cur_val = angle;
+      // TODO: arm calibration need, not just 0-180...
       double value = angle_reverse? map(angle, 180, 0, vmin, vmax):
         map(angle, 0, 180, vmin, vmax);
       set(round(value));
